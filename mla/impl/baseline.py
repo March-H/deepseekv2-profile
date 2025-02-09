@@ -132,26 +132,29 @@ class DeepseekAttention(nn.Module):
         - position_ids: [bsz, q_len]
         '''
         bsz, q_len, _ = hidden_states_q.size()
-        q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states_q)))
+        q = self.q_b_proj(self.q_a_layernorm(self.q_a_proj(hidden_states_q))) # [bsz, q_len, num_heads * q_head_dim] [qt(C);qt(R)无RoPE]
+        # q_b_proj 将ct(Q)通过W(UQ)和W(QR)的连接矩阵进行一次乘法得到两部分的拼接
         q = q.view(bsz, q_len, self.num_heads, self.q_head_dim).transpose(1, 2)
-        q_nope, q_pe = torch.split(
+        q_nope, q_pe = torch.split( # [bsz, num_heads, q_len, qk_nope_head_dim], [bsz, num_heads, q_len, qk_rope_head_dim]
             q, [self.qk_nope_head_dim, self.qk_rope_head_dim], dim=-1
         )
 
         kv_seq_len = hidden_states_kv.size(1)
         compressed_kv = self.kv_a_proj_with_mqa(hidden_states_kv)
-        compressed_kv, k_pe = torch.split(
+        # kv_a_proj_with_mqa 将ct(KV)通过W(DKV)和W(KR)的连接矩阵进行一次乘法得到两部分的拼接
+        compressed_kv, k_pe = torch.split( # ct(KV), Kt(R)无RoPE
             compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
         )
         k_pe = k_pe.view(bsz, kv_seq_len, 1, self.qk_rope_head_dim).transpose(1, 2)
         kv = self.kv_b_proj(self.kv_a_layernorm(compressed_kv)) \
             .view(bsz, kv_seq_len, self.num_heads, self.qk_nope_head_dim + self.v_head_dim) \
             .transpose(1, 2)
+        # 得到kt(C)和vt(C)
         
         k_nope, value_states = torch.split(kv, [self.qk_nope_head_dim, self.v_head_dim], dim=-1)
         cos, sin = self.rotary_emb(value_states)
-        q_pe = apply_rotary_pos_emb(q_pe, cos, sin, q_position_ids)
-        k_pe = apply_rotary_pos_emb(k_pe, cos, sin, kv_position_ids)
+        q_pe = apply_rotary_pos_emb(q_pe, cos, sin, q_position_ids) # qt(R)
+        k_pe = apply_rotary_pos_emb(k_pe, cos, sin, kv_position_ids) # kt(R)
 
         query_states = k_pe.new_empty(bsz, self.num_heads, q_len, self.q_head_dim)
         query_states[:, :, :, : self.qk_nope_head_dim] = q_nope

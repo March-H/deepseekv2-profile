@@ -21,4 +21,4 @@ def main(start: int = 32, end : int = 128 * 1024, bsz: int = 1,
             cur *= 2
 
 if __name__ == '__main__':
-    fire.Fire(main)
+    fire.Fire(main) # 将main暴露给命令行，用python main args的形式调用
